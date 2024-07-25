@@ -218,7 +218,6 @@ pub fn draw(texture: *Texture, drawRect: m.Rect, uvRect: m.Rect, color: m.Vec4, 
 
 pub fn end() !void {
     if (activeBatch) |*batch| {
-        std.debug.print("Flushing batch with {d} items\n", .{batch.items.items.len});
         try batch.flush();
 
         batch.deinit();

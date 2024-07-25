@@ -74,7 +74,7 @@ pub fn main() !void {
     _ = window.setSizeCallback(sizeCallback);
 
     glfw.makeContextCurrent(window);
-    glfw.swapInterval(1);
+    glfw.swapInterval(0);
 
     try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
     try zopengl.loadExtension(glfw.getProcAddress, .ARB_bindless_texture);
@@ -109,8 +109,10 @@ pub fn main() !void {
     try init();
     defer destroy();
 
+    var frames: u64 = 0;
+    var startTime = std.time.milliTimestamp();
+
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
-        const frameStart = std.time.microTimestamp();
         glfw.pollEvents();
 
         zgui.backend.newFrame(@intCast(screen_width), @intCast(screen_height));
@@ -119,21 +121,17 @@ pub fn main() !void {
 
         zgui.backend.draw();
 
-        const frameEnd = std.time.microTimestamp();
-        const frameTime = frameEnd - frameStart;
-        frametimeSamples[frametimeSampleIndex] = frameTime;
-        frametimeSampleCount = @min(frametimeSampleCount + 1, FRAME_TIME_SAMPLES);
-        frametimeSampleIndex = (frametimeSampleIndex + 1) % FRAME_TIME_SAMPLES;
+        frames += 1;
+        const currentTime = std.time.milliTimestamp();
+        if (currentTime - startTime >= 1000) {
+            std.debug.print("FPS: {d}\n", .{frames});
+
+            startTime += 1000;
+            frames = 0;
+        }
 
         window.swapBuffers();
     }
-
-    var frameTimeSum: i64 = 0;
-    for (frametimeSamples[0..frametimeSampleCount]) |sample| {
-        frameTimeSum += sample;
-    }
-    const frameTimeAvg = @divFloor(frameTimeSum, @as(i64, @intCast(frametimeSampleCount)));
-    std.debug.print("Average frame time: {d:.3}ms\n", .{@as(f32, @floatFromInt(frameTimeAvg)) / 1000.0});
 }
 
 const State = struct {
