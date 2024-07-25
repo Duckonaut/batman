@@ -90,4 +90,9 @@ pub const Shader = struct {
         const loc = gl.getUniformLocation(self.id, @ptrCast(name));
         gl.uniformMatrix4fv(loc, 1, gl.FALSE, @ptrCast(&mat.fields[0][0]));
     }
+
+    pub fn setUniformVec4(self: *Shader, name: [:0]const u8, vec: m.Vec4) void {
+        const loc = gl.getUniformLocation(self.id, @ptrCast(name));
+        gl.uniform4f(loc, vec.x, vec.y, vec.z, vec.w);
+    }
 };

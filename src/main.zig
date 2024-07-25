@@ -27,6 +27,13 @@ fn sizeCallback(_: *glfw.Window, width: i32, height: i32) callconv(.C) void {
     gl.viewport(0, 0, width, height);
 }
 
+fn keyboardCallback(_: *glfw.Window, key: glfw.Key, _: i32, action: glfw.Action, _: glfw.Mods) callconv(.C) void {
+    if (action == glfw.Action.press and key == glfw.Key.space) {
+        sb.toggleNaive();
+        std.debug.print("Naive: {s}\n", .{if (sb.isNaive()) "true" else "false"});
+    }
+}
+
 fn openglDebugCallback(_: gl.Enum, t: gl.Enum, _: gl.Uint, _: gl.Enum, length: gl.Sizei, message: [*c]const gl.Char, _: *const anyopaque) callconv(.C) void {
     if (t == gl.DEBUG_TYPE_ERROR) {
         std.debug.print("GLERR: ", .{});
@@ -59,7 +66,7 @@ pub fn main() !void {
     }
 
     const gl_major = 4;
-    const gl_minor = 6;
+    const gl_minor = 3;
     glfw.windowHintTyped(.context_version_major, gl_major);
     glfw.windowHintTyped(.context_version_minor, gl_minor);
     glfw.windowHintTyped(.opengl_profile, .opengl_core_profile);
@@ -72,6 +79,7 @@ pub fn main() !void {
     window.setSizeLimits(400, 400, -1, -1);
 
     _ = window.setSizeCallback(sizeCallback);
+    _ = window.setKeyCallback(keyboardCallback);
 
     glfw.makeContextCurrent(window);
     glfw.swapInterval(0);
@@ -165,6 +173,8 @@ fn init() !void {
 
         const t = try Texture.fromRaw(2, 2, &data);
         try state.textures.append(t);
+
+        gl.makeTextureHandleResidentARB(t.handle);
     }
 
     std.debug.print("Textures: {d}\n", .{state.textures.items.len});
@@ -172,6 +182,7 @@ fn init() !void {
 
 fn destroy() void {
     for (state.textures.items) |*t| {
+        gl.makeTextureHandleNonResidentARB(t.handle);
         t.destroy();
     }
     state.textures.deinit();

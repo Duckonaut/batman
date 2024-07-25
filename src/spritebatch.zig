@@ -16,6 +16,8 @@ var batchGlobals: struct {
     quadVBO: gl.Uint,
     quadVAO: gl.Uint,
     defaultShader: Shader,
+    naiveShader: Shader,
+    naive: bool = false,
 
     vertexSSBO: gl.Uint,
     fragmentSSBO: gl.Uint,
@@ -60,6 +62,19 @@ pub fn init(allocator: std.mem.Allocator) !void {
 
     batchGlobals.defaultShader = try Shader.fromSource(vs, fs);
 
+    const naive_vs_file = try std.fs.cwd().openFile("content/sb_bindful_vs.glsl", .{});
+    defer naive_vs_file.close();
+
+    const naive_fs_file = try std.fs.cwd().openFile("content/sb_bindful_fs.glsl", .{});
+    defer naive_fs_file.close();
+
+    const naive_vs = try naive_vs_file.readToEndAlloc(alloc, 4096);
+    defer alloc.free(naive_vs);
+    const naive_fs = try naive_fs_file.readToEndAlloc(alloc, 4096);
+    defer alloc.free(naive_fs);
+
+    batchGlobals.naiveShader = try Shader.fromSource(naive_vs, naive_fs);
+
     gl.genBuffers(1, &batchGlobals.vertexSSBO);
     gl.bindBuffer(gl.SHADER_STORAGE_BUFFER, batchGlobals.vertexSSBO);
     gl.bufferData(gl.SHADER_STORAGE_BUFFER, 0, null, gl.DYNAMIC_DRAW);
@@ -70,6 +85,14 @@ pub fn init(allocator: std.mem.Allocator) !void {
 }
 
 pub fn deinit() void {}
+
+pub fn toggleNaive() void {
+    batchGlobals.naive = !batchGlobals.naive;
+}
+
+pub fn isNaive() bool {
+    return batchGlobals.naive;
+}
 
 const BatchItem = struct {
     texture: *Texture,
@@ -119,29 +142,6 @@ pub const Batch = struct {
             return;
         }
 
-        // gather all unique texture handles
-        var uniqueTextures = try std.ArrayList(gl.Uint64).initCapacity(alloc, self.items.items.len);
-        defer uniqueTextures.deinit();
-
-        for (self.items.items) |item| {
-            const found = find: {
-                for (uniqueTextures.items) |texture| {
-                    if (texture == item.texture.handle) {
-                        break :find true;
-                    }
-                }
-                break :find false;
-            };
-
-            if (!found) {
-                try uniqueTextures.append(item.texture.handle);
-            }
-        }
-
-        for (uniqueTextures.items) |texture| {
-            gl.makeTextureHandleResidentARB(texture);
-        }
-
         batchGlobals.defaultShader.use();
         batchGlobals.defaultShader.setUniformMat4("u_projection", self.params.projection);
 
@@ -189,14 +189,15 @@ pub const Batch = struct {
         gl.bindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, batchGlobals.fragmentSSBO);
 
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, @intCast(self.items.items.len));
-
-        for (uniqueTextures.items) |texture| {
-            gl.makeTextureHandleNonResidentARB(texture);
-        }
     }
 };
 
 pub fn begin(params: BatchParams) !void {
+    if (batchGlobals.naive) {
+        gl.useProgram(batchGlobals.naiveShader.id);
+        batchGlobals.naiveShader.setUniformMat4("u_projection", params.projection);
+        return;
+    }
     if (activeBatch != null) {
         return BatchError.BatchAlreadyActive;
     }
@@ -205,6 +206,16 @@ pub fn begin(params: BatchParams) !void {
 }
 
 pub fn draw(texture: *Texture, drawRect: m.Rect, uvRect: m.Rect, color: m.Vec4, depth: f32) !void {
+    if (batchGlobals.naive) {
+        gl.bindTexture(gl.TEXTURE_2D, texture.id);
+        batchGlobals.naiveShader.setUniformVec4("u_rect", m.Vec4.new(drawRect.pos.x, drawRect.pos.y, drawRect.size.x, drawRect.size.y));
+        batchGlobals.naiveShader.setUniformVec4("u_uvRect", m.Vec4.new(uvRect.pos.x, uvRect.pos.y, uvRect.size.x, uvRect.size.y));
+        batchGlobals.naiveShader.setUniformVec4("u_color", color);
+
+        gl.bindVertexArray(batchGlobals.quadVAO);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
     if (activeBatch) |*batch| {
         try batch.items.append(BatchItem{
             .texture = texture,
@@ -217,6 +228,9 @@ pub fn draw(texture: *Texture, drawRect: m.Rect, uvRect: m.Rect, color: m.Vec4, 
 }
 
 pub fn end() !void {
+    if (batchGlobals.naive) {
+        return;
+    }
     if (activeBatch) |*batch| {
         try batch.flush();
 
