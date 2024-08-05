@@ -4,6 +4,8 @@
 
 struct SpriteVertexData {
     vec4 rect;
+    vec2 origin;
+    float rot;
 };
 
 layout(binding = 0, std430) readonly buffer vertexSSBO {
@@ -23,6 +25,11 @@ void main() {
 
     vec4 rect = data[gl_InstanceID].rect;
 
-    vec2 pos = i_pos * rect.zw + rect.xy;
+    float rot = data[gl_InstanceID].rot;
+    mat2 rotMat = mat2(cos(rot), -sin(rot), sin(rot), cos(rot));
+
+    vec2 rotatedPos = rotMat * (i_pos - data[gl_InstanceID].origin);
+    vec2 pos = rotatedPos * rect.zw + rect.xy;
+
     gl_Position = u_projection * vec4(pos, 0.0, 1.0);
 }

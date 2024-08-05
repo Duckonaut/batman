@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const app_name = "batman";
+const app_name = "lrj2024";
 const content_dir = "content/";
 
 pub fn build(b: *std.Build) void {
@@ -10,8 +10,16 @@ pub fn build(b: *std.Build) void {
         .name = app_name,
         .root_source_file = b.path(b.pathJoin(&.{ src_path, "main.zig" })),
         .target = target,
-        .optimize = b.standardOptimizeOption(.{}),
+        .optimize = b.standardOptimizeOption(.{
+            .preferred_optimize_mode = .ReleaseFast,
+        }),
     });
+
+    const zaudio = b.dependency("zaudio", .{
+        .target = target,
+    });
+    exe.root_module.addImport("zaudio", zaudio.module("root"));
+    exe.linkLibrary(zaudio.artifact("miniaudio"));
 
     const zglfw = b.dependency("zglfw", .{
         .target = target,

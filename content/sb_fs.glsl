@@ -24,6 +24,6 @@ void main() {
     vec2 uv = uvRect.xy + a_uv * uvRect.zw;
     vec4 texColor = texture(data[a_instance].texture, uv);
 
-    o_color = vec4((texColor * color).rgb, 1.0);
+    o_color = texColor * color;
 }
 

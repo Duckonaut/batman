@@ -7,20 +7,23 @@ const gl = zopengl.bindings;
 
 const zstbi = @import("zstbi");
 
+const audio = @import("audio.zig");
 const sb = @import("spritebatch.zig");
 const shader = @import("shader.zig");
-const texture = @import("texture.zig");
+const gfx = @import("gfx.zig");
 const m = @import("math.zig");
+const util = @import("util.zig");
+const time = @import("time.zig");
 
-const Texture = texture.Texture;
+const Texture = gfx.Texture;
 
 const content_dir = @import("build_options").content_dir;
-const window_title = "dev: batman";
+const window_title = "greachermania";
 
 var gpa: std.mem.Allocator = undefined;
 
-var screen_width: i32 = 800;
-var screen_height: i32 = 500;
+var screen_width: i32 = 512;
+var screen_height: i32 = 512;
 fn sizeCallback(_: *glfw.Window, width: i32, height: i32) callconv(.C) void {
     screen_width = width;
     screen_height = height;
@@ -28,20 +31,13 @@ fn sizeCallback(_: *glfw.Window, width: i32, height: i32) callconv(.C) void {
 }
 
 fn keyboardCallback(_: *glfw.Window, key: glfw.Key, _: i32, action: glfw.Action, _: glfw.Mods) callconv(.C) void {
-    if (action == glfw.Action.press and key == glfw.Key.space) {
-        sb.toggleNaive();
-        std.debug.print("Naive: {s}\n", .{if (sb.isNaive()) "true" else "false"});
-    }
+    if (action == glfw.Action.press and key == glfw.Key.space) {}
 }
 
 fn openglDebugCallback(_: gl.Enum, t: gl.Enum, _: gl.Uint, _: gl.Enum, length: gl.Sizei, message: [*c]const gl.Char, _: *const anyopaque) callconv(.C) void {
-    if (t == gl.DEBUG_TYPE_ERROR) {
-        std.debug.print("GLERR: ", .{});
-    } else {
-        return;
+    if (t == gl.DEBUG_TYPE_ERROR or t == gl.DEBUG_TYPE_UNDEFINED_BEHAVIOR) {
+        std.debug.print("GLMSG: {s}\n", .{message[0..@intCast(length)]});
     }
-
-    std.debug.print("{s}\n", .{message[0..@intCast(length)]});
 }
 
 const FRAME_TIME_SAMPLES = 2000;
@@ -74,15 +70,15 @@ pub fn main() !void {
     glfw.windowHintTyped(.client_api, .opengl_api);
     glfw.windowHintTyped(.doublebuffer, true);
 
-    const window = try glfw.Window.create(800, 500, window_title, null);
+    const window = try glfw.Window.create(screen_width, screen_height, window_title, null);
     defer window.destroy();
-    window.setSizeLimits(400, 400, -1, -1);
+    window.setSizeLimits(screen_width, screen_height, -1, -1);
 
     _ = window.setSizeCallback(sizeCallback);
     _ = window.setKeyCallback(keyboardCallback);
 
     glfw.makeContextCurrent(window);
-    glfw.swapInterval(0);
+    glfw.swapInterval(1);
 
     try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
     try zopengl.loadExtension(glfw.getProcAddress, .ARB_bindless_texture);
@@ -105,8 +101,11 @@ pub fn main() !void {
     zstbi.init(gpa);
     defer zstbi.deinit();
 
-    texture.init(gpa);
-    defer texture.deinit();
+    try audio.init(gpa);
+    defer audio.deinit();
+
+    gfx.init(gpa);
+    defer gfx.deinit();
 
     shader.init(gpa);
     defer shader.deinit();
@@ -114,40 +113,42 @@ pub fn main() !void {
     try sb.init(gpa);
     defer sb.deinit();
 
+    try util.init(gpa);
+    defer util.deinit();
+
+    time.init();
+    defer time.deinit();
+
     try init();
     defer destroy();
 
-    var frames: u64 = 0;
-    var startTime = std.time.milliTimestamp();
-
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
         glfw.pollEvents();
+        time.update();
 
         zgui.backend.newFrame(@intCast(screen_width), @intCast(screen_height));
+
+        try update();
 
         try draw();
 
         zgui.backend.draw();
-
-        frames += 1;
-        const currentTime = std.time.milliTimestamp();
-        if (currentTime - startTime >= 1000) {
-            std.debug.print("FPS: {d}\n", .{frames});
-
-            startTime += 1000;
-            frames = 0;
-        }
 
         window.swapBuffers();
     }
 }
 
 const State = struct {
-    textures: std.ArrayList(Texture),
+    textures: std.StringHashMap(Texture),
+    gameTarget: gfx.RenderTarget,
     rand: std.rand.DefaultPrng,
 };
 
 var state: State = undefined;
+
+const textureNames: [1][]const u8 = .{
+    "player",
+};
 
 fn init() !void {
     const prng = std.rand.DefaultPrng.init(blk: {
@@ -156,67 +157,131 @@ fn init() !void {
         break :blk seed;
     });
     state.rand = prng;
-    state.textures = std.ArrayList(Texture).init(gpa);
+    state.textures = std.StringHashMap(Texture).init(gpa);
 
-    for (0..1024) |_| {
-        var col1: [3]u8 = undefined;
-        var col2: [3]u8 = undefined;
-        state.rand.fill(col1[0..]);
-        state.rand.fill(col2[0..]);
-
-        const data = [16]u8{
-            col1[0], col1[1], col1[2], 255,
-            col2[0], col2[1], col2[2], 255,
-            col2[0], col2[1], col2[2], 255,
-            col1[0], col1[1], col1[2], 255,
-        };
-
-        const t = try Texture.fromRaw(2, 2, &data);
-        try state.textures.append(t);
-
-        gl.makeTextureHandleResidentARB(t.handle);
+    for (textureNames) |name| {
+        const path = try std.fmt.allocPrint(gpa, "{s}textures/{s}.png", .{ content_dir, name });
+        defer gpa.free(path);
+        const t = try Texture.fromFile(path);
+        try state.textures.put(name, t);
     }
 
-    std.debug.print("Textures: {d}\n", .{state.textures.items.len});
+    state.gameTarget = try gfx.RenderTarget.fromSize(64, 64);
 }
 
 fn destroy() void {
-    for (state.textures.items) |*t| {
-        gl.makeTextureHandleNonResidentARB(t.handle);
-        t.destroy();
+    var iter = state.textures.iterator();
+    while (iter.next()) |entry| {
+        Texture.destroy(entry.value_ptr);
     }
     state.textures.deinit();
+    state.gameTarget.destroy();
+}
+
+fn update() !void {
+    _ = zgui.begin("textures", .{});
+
+    var iter = state.textures.iterator();
+
+    _ = zgui.beginTable("textures_table", .{
+        .column = 2,
+        .flags = .{
+            .borders = zgui.TableBorderFlags.all,
+            .resizable = false,
+            .sizing = .fixed_fit,
+        },
+    });
+    zgui.tableSetupColumn("id", .{
+        .flags = .{
+            .width_fixed = true,
+        },
+    });
+    zgui.tableSetupColumn("texture", .{});
+    zgui.tableHeadersRow();
+    zgui.tableNextRow(.{});
+
+    while (iter.next()) |entry| {
+        const t = entry.value_ptr;
+        const name = entry.key_ptr.*;
+        const tag = try std.fmt.allocPrintZ(gpa, "##{s}", .{name});
+        defer gpa.free(tag);
+        _ = zgui.tableNextColumn();
+        zgui.text("{d}", .{t.id});
+        _ = zgui.tableNextColumn();
+        zgui.image(
+            @ptrFromInt(t.id),
+            .{
+                .w = 64,
+                .h = 64,
+            },
+        );
+        if (zgui.isItemHovered(.{}) and zgui.beginTooltip()) {
+            zgui.text("{s}", .{name});
+            zgui.indent(.{ .indent_w = 8.0 });
+            zgui.text("id: {d}", .{t.id});
+            zgui.text("size: {d}x{d}", .{ t.width, t.height });
+            zgui.text("handle: {d}", .{t.handle});
+            zgui.unindent(.{ .indent_w = 8.0 });
+            zgui.endTooltip();
+        }
+        zgui.tableNextRow(.{});
+    }
+
+    zgui.endTable();
+
+    zgui.end();
 }
 
 fn draw() !void {
-    gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const proj = m.Mat4.createOrthogonal(0, @floatFromInt(screen_width), @floatFromInt(screen_height), 0, -1, 1);
+    state.gameTarget.set();
+    gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0.05, 0.1, 0.2, 1.0 });
 
-    const texSize = m.Vec2.splat(8.0);
-    const texPadding = m.Vec2.splat(2.0);
-
-    const spritesX: usize = @intCast(@divTrunc(screen_width, @as(i32, @intFromFloat(texSize.x + texPadding.x))));
-    const spritesY: usize = @intCast(@divTrunc(screen_height, @as(i32, @intFromFloat(texSize.y + texPadding.y))));
-
-    const spriteCount: usize = spritesX * spritesY;
+    const proj = m.Mat4.createOrthogonal(0, 64, 0, 64, -1, 1);
 
     try sb.begin(.{ .projection = proj });
 
-    for (0..spriteCount) |i| {
-        const textureIndex = state.rand.next() % state.textures.items.len;
+    const texture = state.textures.getPtr("player") orelse return error.Unavailable;
+    try sb.draw(
+        texture,
+        m.rect(28, 28, 40, 40),
+        time.gameTime(),
+        null,
+        null,
+        null,
+        0.0,
+    );
 
-        const t = &state.textures.items[textureIndex];
-        const pos = m.Vec2{
-            .x = texPadding.x + @as(f32, @floatFromInt(i % spritesX)) * (texPadding.x + texSize.x),
-            .y = texPadding.y + @as(f32, @floatFromInt(i / spritesX)) * (texPadding.y + texSize.y),
-        };
+    try sb.end();
+    gfx.RenderTarget.unset();
+    gl.viewport(0, 0, screen_width, screen_height);
 
-        try sb.draw(t, m.Rect{
-            .pos = pos,
-            .size = texSize,
-        }, m.Rect.one(), m.Vec4.one(), 0.0);
+    gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0.0, 0.0, 0.0, 1.0 });
+
+    try sb.begin(.{});
+
+    var viewRect = m.rect(0.0, 0.0, 1.0, 1.0);
+    const aspect: f32 = @as(f32, @floatFromInt(screen_width)) / @as(f32, @floatFromInt(screen_height));
+    if (aspect > 1.0) {
+        viewRect.size.x = 1.0 / aspect;
+        viewRect.pos.x = (1.0 - viewRect.size.x) / 2.0;
+    } else {
+        viewRect.size.y = aspect;
+        viewRect.pos.y = (1.0 - viewRect.size.y) / 2.0;
     }
+
+    try sb.drawHandle(
+        state.gameTarget.handle,
+        viewRect,
+        0.0,
+        null,
+        m.vec2(0.0, 0.0),
+        null,
+        0.0,
+    );
 
     try sb.end();
 }

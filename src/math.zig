@@ -1,5 +1,10 @@
 const std = @import("std");
 
+pub const vec2 = Vec2.new;
+pub const vec3 = Vec3.new;
+pub const vec4 = Vec4.new;
+pub const rect = Rect.new;
+
 pub const Vec2 = packed struct {
     x: f32,
     y: f32,

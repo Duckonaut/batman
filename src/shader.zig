@@ -4,6 +4,7 @@ const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 
 const m = @import("math.zig");
+const Texture = @import("gfx.zig").Texture;
 
 var alloc: std.mem.Allocator = undefined;
 
@@ -86,13 +87,37 @@ pub const Shader = struct {
         gl.useProgram(self.id);
     }
 
+    fn getUniformLocation(self: *Shader, name: []const u8) gl.Int {
+        return gl.getUniformLocation(self.id, @ptrCast(name));
+    }
+
     pub fn setUniformMat4(self: *Shader, name: [:0]const u8, mat: m.Mat4) void {
-        const loc = gl.getUniformLocation(self.id, @ptrCast(name));
+        const loc = self.getUniformLocation(name);
         gl.uniformMatrix4fv(loc, 1, gl.FALSE, @ptrCast(&mat.fields[0][0]));
     }
 
+    pub fn setUniformFloat(self: *Shader, name: [:0]const u8, value: f32) void {
+        const loc = self.getUniformLocation(name);
+        gl.uniform1f(loc, value);
+    }
+
+    pub fn setUniformVec2(self: *Shader, name: [:0]const u8, vec: m.Vec2) void {
+        const loc = self.getUniformLocation(name);
+        gl.uniform2f(loc, vec.x, vec.y);
+    }
+
+    pub fn setUniformVec3(self: *Shader, name: [:0]const u8, vec: m.Vec3) void {
+        const loc = self.getUniformLocation(name);
+        gl.uniform3f(loc, vec.x, vec.y, vec.z);
+    }
+
     pub fn setUniformVec4(self: *Shader, name: [:0]const u8, vec: m.Vec4) void {
-        const loc = gl.getUniformLocation(self.id, @ptrCast(name));
+        const loc = self.getUniformLocation(name);
         gl.uniform4f(loc, vec.x, vec.y, vec.z, vec.w);
+    }
+
+    pub fn setUniformTexture(self: *Shader, name: [:0]const u8, texture: *Texture) void {
+        const loc = self.getUniformLocation(name);
+        gl.uniformHandleui64ARB(loc, texture.handle);
     }
 };
